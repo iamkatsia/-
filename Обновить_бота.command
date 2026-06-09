@@ -46,7 +46,7 @@ git config user.email >/dev/null 2>&1 || git config user.email "e.tikhomirova.en
 git config user.name  >/dev/null 2>&1 || git config user.name  "Kate"
 
 # --- адрес Amvera зашит прямо здесь, вводить ничего не нужно ---
-AMVERA_URL="https://git.msk0.amvera.ru/iamkatsia/bot-anglijskij"
+AMVERA_URL="https://iamkatsia@git.msk0.amvera.ru/iamkatsia/bot-anglijskij"
 git remote remove amvera >/dev/null 2>&1
 git remote add amvera "$AMVERA_URL"
 
@@ -56,7 +56,7 @@ git commit -m "Обновление $(date '+%Y-%m-%d %H:%M')" >/dev/null 2>&1
 
 echo
 echo "Отправляю изменения на Amvera..."
-echo "👉 В ПЕРВЫЙ раз спросит логин и пароль от Amvera — введи их."
+echo "👉 Спросит ТОЛЬКО пароль от Amvera (Password) — введи его."
 echo "   (пароль при вводе не виден — это нормально, печатай и жми Enter)"
 echo
 echo "--------------------------------------------"
