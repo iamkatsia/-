@@ -19,6 +19,28 @@ PAYMENT_DETAILS = os.getenv(
 LESSON_PRICE_RUB = int(os.getenv("LESSON_PRICE_RUB", "1100") or "1100")
 LESSON_PRICE_BYN = int(os.getenv("LESSON_PRICE_BYN", "35") or "35")
 
+# ---------- Google Календарь (необязательно) ----------
+# Если эти значения не заданы — бот работает как раньше, просто без календаря.
+#
+# GOOGLE_CALENDAR_ID — id (обычно это твой email от Google), в который писать уроки.
+# Учётные данные сервисного аккаунта можно дать двумя способами:
+#   1) GOOGLE_CREDENTIALS_JSON — всё содержимое JSON-ключа одной строкой (удобно на хостинге);
+#   2) GOOGLE_CREDENTIALS_FILE — путь к файлу ключа (удобно локально).
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "").strip()
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
+
+# Путь к файлу ключа. На хостинге Amvera папка /data сохраняется между перезапусками.
+_default_cred = (
+    "/data/service_account.json"
+    if os.path.isdir("/data")
+    else os.path.join(os.path.dirname(__file__), "service_account.json")
+)
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", _default_cred).strip()
+
+# Длительность урока в минутах — для размера события в календаре.
+LESSON_DURATION_MIN = int(os.getenv("LESSON_DURATION_MIN", "60") or "60")
+
+
 # Путь к базе данных.
 # На хостинге Amvera папка /data сохраняется между перезапусками — используем её,
 # чтобы не терять записи и баланс уроков. Локально — файл рядом с проектом.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import aiosqlite
 from datetime import datetime, timedelta
 from config import DB_PATH
+import gcal
 
 
 async def init_db() -> None:
@@ -77,7 +78,49 @@ async def init_db() -> None:
             )
             """
         )
+        # Миграция: колонка с id события в Google Календаре (для уже существующей БД)
+        cur = await db.execute("PRAGMA table_info(slots)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "gcal_event_id" not in cols:
+            await db.execute("ALTER TABLE slots ADD COLUMN gcal_event_id TEXT")
         await db.commit()
+
+
+# ---------- Google Календарь (синхронизация записей) ----------
+
+async def _event_text(student_id: int) -> tuple[str, str]:
+    """Заголовок и описание события урока для конкретного ученика."""
+    u = await get_user(student_id)
+    name = u["name"] if u and u.get("name") else f"ученик {student_id}"
+    return f"🇬🇧 Урок английского — {name}", f"Запись через бота. Ученик: {name}"
+
+
+async def _calendar_add(slot_id: int, student_id: int) -> None:
+    """Создаёт событие урока в календаре и сохраняет его id в слоте."""
+    if not gcal.enabled():
+        return
+    slot = await get_slot(slot_id)
+    if not slot:
+        return
+    summary, desc = await _event_text(student_id)
+    event_id = await gcal.create_event(slot["start_at"], summary, desc)
+    if event_id:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "UPDATE slots SET gcal_event_id = ? WHERE id = ?", (event_id, slot_id)
+            )
+            await db.commit()
+
+
+async def _filter_busy(slots: list[dict]) -> list[dict]:
+    """Убирает из списка свободных слотов те, что пересекаются с занятостью в календаре."""
+    if not slots or not gcal.enabled():
+        return slots
+    dates = [s["start_at"][:10] for s in slots]
+    busy = await gcal.busy_intervals(min(dates), max(dates))
+    if not busy:
+        return slots
+    return [s for s in slots if not gcal.slot_is_busy(s["start_at"], busy)]
 
 
 # ---------- Пользователи ----------
@@ -149,7 +192,7 @@ async def add_slot(start_at: str) -> None:
 
 
 async def free_slots() -> list[dict]:
-    """Свободные слоты в будущем."""
+    """Свободные слоты в будущем (с учётом занятости в Google Календаре)."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -157,7 +200,8 @@ async def free_slots() -> list[dict]:
             "SELECT * FROM slots WHERE student_id IS NULL AND start_at >= ? ORDER BY start_at",
             (now,),
         )
-        return [dict(r) for r in await cur.fetchall()]
+        slots = [dict(r) for r in await cur.fetchall()]
+    return await _filter_busy(slots)
 
 
 async def get_slot(slot_id: int) -> dict | None:
@@ -176,19 +220,31 @@ async def book_slot(slot_id: int, student_id: int) -> bool:
             (student_id, slot_id),
         )
         await db.commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        await _calendar_add(slot_id, student_id)  # создаём событие в календаре
+    return ok
 
 
 async def cancel_slot(slot_id: int, student_id: int) -> bool:
     """Освобождает слот, если он принадлежит этому ученику."""
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
-            "UPDATE slots SET student_id = NULL, reminded_24 = 0, reminded_2 = 0 "
-            "WHERE id = ? AND student_id = ?",
+            "SELECT gcal_event_id FROM slots WHERE id = ? AND student_id = ?",
+            (slot_id, student_id),
+        )
+        row = await cur.fetchone()
+        event_id = row[0] if row else None
+        cur = await db.execute(
+            "UPDATE slots SET student_id = NULL, reminded_24 = 0, reminded_2 = 0, "
+            "gcal_event_id = NULL WHERE id = ? AND student_id = ?",
             (slot_id, student_id),
         )
         await db.commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        await gcal.delete_event(event_id)  # убираем событие из календаря
+    return ok
 
 
 async def student_bookings(student_id: int) -> list[dict]:
@@ -288,7 +344,16 @@ async def slots_in_range(date_from: str, date_to: str) -> list[dict]:
             """,
             (date_from + " 00:00", date_to + " 23:59"),
         )
-        return [dict(r) for r in await cur.fetchall()]
+        rows = [dict(r) for r in await cur.fetchall()]
+    # Свободные слоты, попадающие на занятость в календаре, прячем; занятые оставляем.
+    if not gcal.enabled():
+        return rows
+    free = [r for r in rows if r["student_id"] is None]
+    booked = [r for r in rows if r["student_id"] is not None]
+    free = await _filter_busy(free)
+    merged = booked + free
+    merged.sort(key=lambda r: r["start_at"])
+    return merged
 
 
 # ---------- Шаблон расписания ----------
@@ -364,6 +429,7 @@ async def generate_student_slots(student_id: int, weeks: int = 4) -> int:
         by_day.setdefault(item["day_of_week"], []).append(item["time_str"])
 
     added = 0
+    new_slot_ids: list[int] = []
     async with aiosqlite.connect(DB_PATH) as db:
         for delta in range(weeks * 7):
             day = today + timedelta(days=delta)
@@ -392,14 +458,19 @@ async def generate_student_slots(student_id: int, weeks: int = 4) -> int:
                         "UPDATE slots SET student_id = ? WHERE id = ?",
                         (student_id, free[0]),
                     )
+                    new_slot_ids.append(free[0])
                 else:
                     # Создаём персональный слот
-                    await db.execute(
+                    c = await db.execute(
                         "INSERT INTO slots (start_at, student_id) VALUES (?, ?)",
                         (start_at, student_id),
                     )
+                    new_slot_ids.append(c.lastrowid)
                 added += 1
         await db.commit()
+    # Создаём события в календаре для всех новых записей ученика
+    for slot_id in new_slot_ids:
+        await _calendar_add(slot_id, student_id)
     return added
 
 
