@@ -15,6 +15,10 @@ PAYMENT_DETAILS = os.getenv(
     "Реквизиты для оплаты пока не заданы. Укажи их в файле .env (PAYMENT_DETAILS).",
 ).replace("\\n", "\n").strip()
 
+# Цена одного урока — для показа суммы к оплате. Можно поменять в .env.
+LESSON_PRICE_RUB = int(os.getenv("LESSON_PRICE_RUB", "1100") or "1100")
+LESSON_PRICE_BYN = int(os.getenv("LESSON_PRICE_BYN", "35") or "35")
+
 # Путь к базе данных.
 # На хостинге Amvera папка /data сохраняется между перезапусками — используем её,
 # чтобы не терять записи и баланс уроков. Локально — файл рядом с проектом.

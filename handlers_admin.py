@@ -8,7 +8,7 @@ from aiogram.types import Message, CallbackQuery
 
 import db
 import keyboards as kb
-from config import ADMIN_ID, PAYMENT_DETAILS
+from config import ADMIN_ID, PAYMENT_DETAILS, LESSON_PRICE_RUB, LESSON_PRICE_BYN
 from states import AdminStates
 from utils import extract_file, send_stored_file, fmt_dt
 
@@ -86,7 +86,7 @@ async def lesson_done_menu(message: Message):
         await message.answer("Пока нет учеников.")
         return
     await message.answer(
-        "Выбери ученика, чтобы списать 1 урок:",
+        "Выбери ученика — отмечу проведённый урок (+1 к оплате):",
         reply_markup=kb.students_kb(students, "done"),
     )
 
@@ -94,17 +94,17 @@ async def lesson_done_menu(message: Message):
 @router.callback_query(F.data.startswith("done:"))
 async def lesson_done(call: CallbackQuery, bot: Bot):
     student_id = int(call.data.split(":")[1])
-    left = await db.change_lessons(student_id, -1)
+    owed = await db.change_lessons(student_id, 1)
     student = await db.get_user(student_id)
-    await call.message.edit_text(f"✅ Урок списан у {student['name']}. Осталось: {left}.")
+    await call.message.edit_text(
+        f"✅ Урок отмечен у {student['name']}. Уроков к оплате: {owed}."
+    )
     await call.answer()
     try:
-        msg = f"Урок проведён ✅ Осталось оплаченных уроков: {left}."
-        if left == 1:
-            msg += f"\n\n🔔 Остался последний урок — пора оплатить занятия.\n\nРеквизиты:\n{PAYMENT_DETAILS}"
-        elif left == 0:
-            msg += f"\n\n🔔 Оплаченные уроки закончились. Реквизиты для оплаты:\n{PAYMENT_DETAILS}"
-        await bot.send_message(student_id, msg)
+        await bot.send_message(
+            student_id,
+            f"Урок проведён ✅\nУроков к оплате накопилось: {owed}.",
+        )
     except Exception:
         pass
 
@@ -150,7 +150,7 @@ async def hw_give_receive(message: Message, state: FSMContext, bot: Bot):
         await message.answer("⚠️ Не удалось доставить ДЗ ученику (он не запускал бота).")
 
 
-# ---------- Отметить оплату (начислить уроки) ----------
+# ---------- Отметить оплату (обнулить счётчик к оплате) ----------
 
 @router.message(F.text == "💰 Отметить оплату")
 async def payment_mark_menu(message: Message):
@@ -160,41 +160,25 @@ async def payment_mark_menu(message: Message):
         await message.answer("Пока нет учеников.")
         return
     await message.answer(
-        "Кто оплатил? Выбери ученика, потом укажешь число уроков:",
+        "Кто оплатил? Выбери ученика — обнулю его счётчик «к оплате»:",
         reply_markup=kb.students_kb(students, "pay"),
     )
 
 
 @router.callback_query(F.data.startswith("pay:"))
-async def payment_mark_pick(call: CallbackQuery, state: FSMContext):
+async def payment_mark_pick(call: CallbackQuery, bot: Bot):
     student_id = int(call.data.split(":")[1])
-    await state.set_state(AdminStates.adding_payment)
-    await state.update_data(student_id=student_id)
-    await call.message.answer("Сколько уроков начислить? Пришли число (например, 8).")
-    await call.answer()
-
-
-@router.message(AdminStates.adding_payment)
-async def payment_mark_receive(message: Message, state: FSMContext, bot: Bot):
-    text = (message.text or "").strip()
-    if not text.isdigit() or int(text) <= 0:
-        await message.answer("Нужно положительное число. Попробуй ещё раз.")
-        return
-    lessons = int(text)
-    data = await state.get_data()
-    student_id = data["student_id"]
-    new_total = await db.change_lessons(student_id, lessons)
-    await db.add_payment(student_id, "manual", lessons, 0)
-    await state.clear()
     student = await db.get_user(student_id)
-    await message.answer(
-        f"✅ {student['name']}: начислено {lessons} ур. На балансе: {new_total}.",
-        reply_markup=kb.admin_menu(),
+    was = await db.reset_lessons(student_id)
+    await db.add_payment(student_id, "manual", was, was * LESSON_PRICE_RUB)
+    await call.message.edit_text(
+        f"✅ Оплата отмечена: {student['name']}. Счётчик обнулён (было {was} ур.)."
     )
+    await call.answer()
     try:
         await bot.send_message(
             student_id,
-            f"💳 Оплата получена, спасибо! Начислено уроков: {lessons}. На балансе: {new_total}.",
+            "💳 Оплата получена, спасибо! Счёт за уроки обнулён ✅",
         )
     except Exception:
         pass
@@ -219,11 +203,15 @@ async def payment_remind_menu(message: Message):
 async def payment_remind_send(call: CallbackQuery, bot: Bot):
     student_id = int(call.data.split(":")[1])
     student = await db.get_user(student_id)
-    left = student["lessons_left"] if student else 0
+    owed = student["lessons_left"] if student else 0
+    rub = owed * LESSON_PRICE_RUB
+    byn = owed * LESSON_PRICE_BYN
     try:
         await bot.send_message(
             student_id,
-            f"🔔 Напоминание об оплате.\n\nОсталось оплаченных уроков: {left}.\n\n"
+            f"🔔 Напоминание об оплате.\n\n"
+            f"Уроков к оплате: {owed}\n"
+            f"Сумма: {rub} ₽ или {byn} BYN\n\n"
             f"Реквизиты:\n{PAYMENT_DETAILS}",
         )
         await call.message.edit_text(f"✅ Напоминание отправлено: {student['name']}.")
@@ -241,7 +229,7 @@ async def list_students(message: Message):
     if not students:
         await message.answer("Пока нет учеников.")
         return
-    lines = [f"• {s['name']} — оплачено уроков: {s['lessons_left']}" for s in students]
+    lines = [f"• {s['name']} — к оплате уроков: {s['lessons_left']}" for s in students]
     await message.answer("👥 Ученики:\n" + "\n".join(lines))
 
 

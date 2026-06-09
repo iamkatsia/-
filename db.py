@@ -90,7 +90,8 @@ async def all_users() -> list[dict]:
 
 
 async def change_lessons(tg_id: int, delta: int) -> int:
-    """Меняет счётчик оплаченных уроков на delta. Возвращает новое значение."""
+    """Меняет счётчик уроков «к оплате» на delta. Возвращает новое значение.
+    Поле lessons_left здесь = сколько уроков ученик уже взял и пока не оплатил."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE users SET lessons_left = MAX(0, lessons_left + ?) WHERE tg_id = ?",
@@ -100,6 +101,17 @@ async def change_lessons(tg_id: int, delta: int) -> int:
         cur = await db.execute("SELECT lessons_left FROM users WHERE tg_id = ?", (tg_id,))
         row = await cur.fetchone()
         return row[0] if row else 0
+
+
+async def reset_lessons(tg_id: int) -> int:
+    """Обнуляет счётчик уроков к оплате (после оплаты). Возвращает сколько было до обнуления."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT lessons_left FROM users WHERE tg_id = ?", (tg_id,))
+        row = await cur.fetchone()
+        was = row[0] if row else 0
+        await db.execute("UPDATE users SET lessons_left = 0 WHERE tg_id = ?", (tg_id,))
+        await db.commit()
+        return was
 
 
 # ---------- Слоты / запись ----------

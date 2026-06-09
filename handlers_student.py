@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 
 import db
 import keyboards as kb
-from config import ADMIN_ID, PAYMENT_DETAILS
+from config import ADMIN_ID, PAYMENT_DETAILS, LESSON_PRICE_RUB, LESSON_PRICE_BYN
 from states import StudentStates
 from utils import extract_file, send_stored_file, fmt_dt
 
@@ -53,13 +53,7 @@ async def book(call: CallbackQuery, bot: Bot):
         await call.answer("Увы, этот слот только что заняли.", show_alert=True)
         return
     slot = await db.get_slot(slot_id)
-    user = await db.get_user(call.from_user.id)
     await call.message.edit_text(f"✅ Ты записана на {fmt_dt(slot['start_at'])}.")
-    if user and user["lessons_left"] <= 0:
-        await call.message.answer(
-            "⚠️ На балансе нет оплаченных уроков. "
-            "Оплати занятие в разделе «💳 Оплата и абонемент»."
-        )
     await call.answer("Записал!")
     # уведомление учителю
     uname = f"@{call.from_user.username}" if call.from_user.username else call.from_user.full_name
@@ -113,17 +107,20 @@ async def confirm(call: CallbackQuery):
         pass
 
 
-# ---------- Оплата (реквизиты + баланс) ----------
+# ---------- Оплата (сколько уроков к оплате + реквизиты) ----------
 
 @router.message(F.text == "💳 Оплата")
 async def payment_menu(message: Message):
     user = await db.get_user(message.from_user.id)
-    left = user["lessons_left"] if user else 0
+    owed = user["lessons_left"] if user else 0
+    rub = owed * LESSON_PRICE_RUB
+    byn = owed * LESSON_PRICE_BYN
     await message.answer(
         f"💳 <b>Оплата</b>\n\n"
-        f"Осталось оплаченных уроков: <b>{left}</b>\n\n"
+        f"Уроков к оплате: <b>{owed}</b>\n"
+        f"К оплате: <b>{rub} ₽</b> или <b>{byn} BYN</b>\n\n"
         f"Реквизиты для оплаты:\n{PAYMENT_DETAILS}\n\n"
-        "После оплаты учитель отметит занятия на балансе."
+        "Оплата в конце месяца. После оплаты учитель отметит это в боте."
     )
 
 

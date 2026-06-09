@@ -65,7 +65,7 @@ def students_kb(students: list[dict], action: str) -> InlineKeyboardMarkup:
     'payremind' (напомнить об оплате)."""
     rows = [
         [InlineKeyboardButton(
-            text=f"{s['name']} (осталось: {s['lessons_left']})",
+            text=f"{s['name']} (к оплате: {s['lessons_left']})",
             callback_data=f"{action}:{s['tg_id']}",
         )]
         for s in students
