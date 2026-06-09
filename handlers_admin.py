@@ -266,22 +266,32 @@ async def payment_remind_send(call: CallbackQuery, bot: Bot):
 
 @router.message(F.text == "👥 Ученики")
 async def list_students(message: Message):
-    students = await db.all_users()
-    students = [s for s in students if s["tg_id"] != ADMIN_ID]
-    if not students:
-        await message.answer("Пока нет учеников.")
-        return
-    await message.answer("👥 Выбери ученика:", reply_markup=kb.students_list_kb(students))
+    try:
+        students = await db.all_users()
+        students = [s for s in students if s["tg_id"] != ADMIN_ID]
+        if not students:
+            await message.answer("Пока нет учеников.")
+            return
+        lines = [f"• {s['name']} — уроков к оплате: {s['lessons_left']}" for s in students]
+        text = "👥 <b>Ученики:</b>\n" + "\n".join(lines) + "\n\nВыбери ученика для управления расписанием:"
+        await message.answer(text, reply_markup=kb.students_list_kb(students))
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка при загрузке учеников: {e}")
 
 
 @router.callback_query(F.data == "students_list")
 async def students_list_cb(call: CallbackQuery):
-    students = await db.all_users()
-    students = [s for s in students if s["tg_id"] != ADMIN_ID]
-    if not students:
-        await call.message.edit_text("Пока нет учеников.")
-    else:
-        await call.message.edit_text("👥 Выбери ученика:", reply_markup=kb.students_list_kb(students))
+    try:
+        students = await db.all_users()
+        students = [s for s in students if s["tg_id"] != ADMIN_ID]
+        if not students:
+            await call.message.edit_text("Пока нет учеников.")
+        else:
+            lines = [f"• {s['name']} — уроков к оплате: {s['lessons_left']}" for s in students]
+            text = "👥 <b>Ученики:</b>\n" + "\n".join(lines) + "\n\nВыбери ученика:"
+            await call.message.edit_text(text, reply_markup=kb.students_list_kb(students))
+    except Exception as e:
+        await call.message.edit_text(f"⚠️ Ошибка: {e}")
     await call.answer()
 
 
