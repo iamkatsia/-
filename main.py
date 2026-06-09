@@ -1,4 +1,5 @@
 """Точка входа. Запуск: python main.py"""
+# Тест авто-деплоя через GitHub → Amvera (2026-06-09)
 import asyncio
 import logging
 
