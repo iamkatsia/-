@@ -1,4 +1,5 @@
 """Хендлеры для учителя-админа. Доступны только пользователю с ADMIN_ID."""
+from __future__ import annotations
 from datetime import datetime
 
 from aiogram import Router, F, Bot
@@ -10,7 +11,10 @@ import db
 import keyboards as kb
 from config import ADMIN_ID, PAYMENT_DETAILS, LESSON_PRICE_RUB, LESSON_PRICE_BYN
 from states import AdminStates
-from utils import extract_file, send_stored_file, fmt_dt
+from utils import extract_file, send_stored_file, fmt_dt, week_bounds, week_title, week_monday
+from utils import _RU_WEEKDAYS_SHORT, _RU_MONTHS_SHORT
+from keyboards import DAYS_NAMES
+from datetime import timedelta
 
 router = Router()
 # Весь роутер доступен только админу
@@ -61,19 +65,57 @@ async def add_slots_receive(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kb.admin_menu())
 
 
-# ---------- Все записи ----------
+# ---------- Все записи — недельный вид ----------
+
+def _format_admin_week(slots: list[dict], offset: int) -> str:
+    """Форматирует сводку недели для учителя."""
+    monday = week_monday(offset)
+    lines = [f"🗓 <b>Расписание: {week_title(offset)}</b>\n"]
+    has_slots = False
+    for delta in range(7):
+        day = monday + timedelta(days=delta)
+        d_str = day.strftime("%Y-%m-%d")
+        day_slots = [s for s in slots if s["start_at"].startswith(d_str)]
+        if not day_slots:
+            continue
+        has_slots = True
+        day_label = f"<b>{_RU_WEEKDAYS_SHORT[delta]}, {day.day} {_RU_MONTHS_SHORT[day.month]}</b>"
+        lines.append(day_label)
+        for s in day_slots:
+            time = s["start_at"][11:16]
+            if s["student_id"]:
+                name = s.get("student_name") or "?"
+                uname = f" (@{s['student_username']})" if s.get("student_username") else ""
+                lines.append(f"  ✅ {time} — {name}{uname}")
+            else:
+                lines.append(f"  ◻️ {time} — <i>свободно</i>")
+        lines.append("")
+    if not has_slots:
+        lines.append("На эту неделю слотов нет.\nДобавь через «📆 Расписание» или «➕ Добавить слоты».")
+    return "\n".join(lines)
+
+
+async def _send_admin_week(target, offset: int) -> None:
+    date_from, date_to = week_bounds(offset)
+    slots = await db.slots_in_range(date_from, date_to)
+    text = _format_admin_week(slots, offset)
+    markup = kb.admin_week_kb(offset)
+    if isinstance(target, CallbackQuery):
+        await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
 
 @router.message(F.text == "🗓 Все записи")
 async def all_bookings(message: Message):
-    bookings = await db.all_upcoming_bookings()
-    if not bookings:
-        await message.answer("Предстоящих записей нет.")
-        return
-    lines = []
-    for b in bookings:
-        uname = f"@{b['student_username']}" if b["student_username"] else b["student_name"]
-        lines.append(f"• {fmt_dt(b['start_at'])} — {uname}")
-    await message.answer("🗓 Предстоящие уроки:\n" + "\n".join(lines))
+    await _send_admin_week(message, offset=0)
+
+
+@router.callback_query(F.data.startswith("aweek:"))
+async def admin_week_nav(call: CallbackQuery):
+    offset = int(call.data.split(":")[1])
+    await _send_admin_week(call, offset)
 
 
 # ---------- Провести урок (списать занятие) ----------
@@ -229,8 +271,117 @@ async def list_students(message: Message):
     if not students:
         await message.answer("Пока нет учеников.")
         return
-    lines = [f"• {s['name']} — к оплате уроков: {s['lessons_left']}" for s in students]
-    await message.answer("👥 Ученики:\n" + "\n".join(lines))
+    await message.answer("👥 Выбери ученика:", reply_markup=kb.students_list_kb(students))
+
+
+@router.callback_query(F.data == "students_list")
+async def students_list_cb(call: CallbackQuery):
+    students = await db.all_users()
+    students = [s for s in students if s["tg_id"] != ADMIN_ID]
+    if not students:
+        await call.message.edit_text("Пока нет учеников.")
+    else:
+        await call.message.edit_text("👥 Выбери ученика:", reply_markup=kb.students_list_kb(students))
+    await call.answer()
+
+
+async def _show_student_profile(target, student_id: int) -> None:
+    """Показывает профиль ученика с его расписанием."""
+    student = await db.get_user(student_id)
+    if not student:
+        text = "Ученик не найден."
+        markup = None
+    else:
+        schedule = await db.get_student_schedule(student_id)
+        uname = f" (@{student['username']})" if student.get("username") else ""
+        if schedule:
+            sched_lines = "\n".join(
+                f"  • {DAYS_NAMES[i['day_of_week']]} {i['time_str']}"
+                for i in schedule
+            )
+            sched_text = f"\n\n📋 <b>Личное расписание:</b>\n{sched_lines}\n\nНажми 🗑 напротив дня — удалить из расписания."
+        else:
+            sched_text = "\n\n📋 <b>Расписание не назначено.</b>\nНажми «➕ Добавить день/время»."
+        text = (
+            f"👤 <b>{student['name']}</b>{uname}\n"
+            f"Уроков к оплате: {student['lessons_left']}"
+            f"{sched_text}"
+        )
+        markup = kb.student_profile_kb(student_id, schedule)
+
+    if isinstance(target, CallbackQuery):
+        await target.message.edit_text(text, reply_markup=markup)
+        await target.answer()
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("student_profile:"))
+async def student_profile(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    student_id = int(call.data.split(":")[1])
+    await _show_student_profile(call, student_id)
+
+
+# ---------- Личное расписание ученика ----------
+
+@router.callback_query(F.data.startswith("add_ssched:"))
+async def student_sched_add_start(call: CallbackQuery, state: FSMContext):
+    student_id = int(call.data.split(":")[1])
+    await state.set_state(AdminStates.student_sched_pick_day)
+    await state.update_data(target_student_id=student_id)
+    await call.message.answer("Выбери день недели:", reply_markup=kb.days_kb())
+    await call.answer()
+
+
+@router.callback_query(AdminStates.student_sched_pick_day, F.data.startswith("tplday:"))
+async def student_sched_pick_day(call: CallbackQuery, state: FSMContext):
+    day = int(call.data.split(":")[1])
+    await state.set_state(AdminStates.student_sched_pick_time)
+    await state.update_data(day_of_week=day)
+    await call.message.answer(
+        f"День: <b>{DAYS_NAMES[day]}</b>\n"
+        "Введи время в формате <b>ЧЧ:ММ</b>, например <code>17:00</code>:"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.student_sched_pick_time)
+async def student_sched_pick_time(message: Message, state: FSMContext):
+    time_input = (message.text or "").strip()
+    try:
+        datetime.strptime(time_input, "%H:%M")
+    except ValueError:
+        await message.answer("Неверный формат. Введи время как <code>17:00</code>:")
+        return
+    data = await state.get_data()
+    student_id = data["target_student_id"]
+    day = data["day_of_week"]
+    await db.add_student_schedule_item(student_id, day, time_input)
+    await state.clear()
+    await message.answer(f"✅ Добавлено: {DAYS_NAMES[day]} {time_input}")
+    await _show_student_profile(message, student_id)
+
+
+@router.callback_query(F.data.startswith("del_ssched:"))
+async def student_sched_delete(call: CallbackQuery):
+    _, item_id_str, student_id_str = call.data.split(":")
+    await db.remove_student_schedule_item(int(item_id_str))
+    await call.answer("Удалено")
+    await _show_student_profile(call, int(student_id_str))
+
+
+@router.callback_query(F.data.startswith("gen_ssched:"))
+async def student_sched_generate(call: CallbackQuery):
+    student_id = int(call.data.split(":")[1])
+    count = await db.generate_student_slots(student_id, weeks=4)
+    if count:
+        await call.answer(f"✅ Создано уроков: {count}", show_alert=True)
+    else:
+        await call.answer(
+            "Новых уроков не создано — либо расписание пустое, либо все уже созданы.",
+            show_alert=True,
+        )
 
 
 # ---------- Рассылка ----------
@@ -258,3 +409,95 @@ async def broadcast_send(message: Message, state: FSMContext, bot: Bot):
         f"📣 Рассылка завершена. Доставлено: {sent}, не доставлено: {failed}.",
         reply_markup=kb.admin_menu(),
     )
+
+
+# ---------- Расписание (шаблон + генерация слотов) ----------
+
+async def _schedule_text(templates: list[dict]) -> str:
+    if templates:
+        lines = [f"• {DAYS_NAMES[t['day_of_week']]} {t['time_str']}" for t in templates]
+        return (
+            "📆 <b>Шаблон расписания</b>\n\n"
+            "Регулярные слоты занятий:\n" + "\n".join(lines) + "\n\n"
+            "Нажми 🗑 напротив времени, чтобы убрать его из шаблона.\n"
+            "Кнопка «📅 Создать слоты» добавляет свободные слоты на ближайшие 4 недели."
+        )
+    return (
+        "📆 <b>Шаблон расписания</b>\n\n"
+        "Шаблон пуст. Нажми «➕ Добавить время», чтобы задать регулярные слоты.\n\n"
+        "После настройки шаблона нажми «📅 Создать слоты» — бот добавит все слоты "
+        "на ближайшие 4 недели автоматически."
+    )
+
+
+@router.message(F.text == "📆 Расписание")
+async def schedule_menu(message: Message, state: FSMContext):
+    await state.clear()
+    templates = await db.get_templates()
+    await message.answer(
+        await _schedule_text(templates),
+        reply_markup=kb.schedule_template_kb(templates),
+    )
+
+
+@router.callback_query(F.data == "addtpl")
+async def template_add_start(call: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminStates.template_pick_day)
+    await call.message.answer("Выбери день недели:", reply_markup=kb.days_kb())
+    await call.answer()
+
+
+@router.callback_query(AdminStates.template_pick_day, F.data.startswith("tplday:"))
+async def template_add_day(call: CallbackQuery, state: FSMContext):
+    day = int(call.data.split(":")[1])
+    await state.set_state(AdminStates.template_pick_time)
+    await state.update_data(day_of_week=day)
+    await call.message.answer(
+        f"День: <b>{DAYS_NAMES[day]}</b>\n"
+        "Введи время в формате <b>ЧЧ:ММ</b>, например <code>17:00</code>:"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.template_pick_time)
+async def template_add_time(message: Message, state: FSMContext):
+    time_input = message.text.strip() if message.text else ""
+    try:
+        datetime.strptime(time_input, "%H:%M")
+    except ValueError:
+        await message.answer("Неверный формат. Введи время как <code>17:00</code>:")
+        return
+    data = await state.get_data()
+    day = data["day_of_week"]
+    await db.add_template(day, time_input)
+    await state.clear()
+    templates = await db.get_templates()
+    await message.answer(
+        f"✅ Добавлено: {DAYS_NAMES[day]} {time_input}\n\n"
+        + await _schedule_text(templates),
+        reply_markup=kb.schedule_template_kb(templates),
+    )
+
+
+@router.callback_query(F.data.startswith("deltpl:"))
+async def template_delete(call: CallbackQuery):
+    tpl_id = int(call.data.split(":")[1])
+    await db.remove_template(tpl_id)
+    templates = await db.get_templates()
+    await call.message.edit_text(
+        await _schedule_text(templates),
+        reply_markup=kb.schedule_template_kb(templates),
+    )
+    await call.answer("Удалено")
+
+
+@router.callback_query(F.data == "genslots")
+async def generate_slots(call: CallbackQuery):
+    count = await db.generate_slots_from_templates(weeks=4)
+    if count:
+        await call.answer(f"✅ Создано новых слотов: {count}", show_alert=True)
+    else:
+        await call.answer(
+            "Новых слотов не добавлено — либо шаблон пуст, либо все слоты уже существуют.",
+            show_alert=True,
+        )

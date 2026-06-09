@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Telegram Bot (polling)",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": ["/Users/iamkatsia/tutor_bot_dev/main.py"],
+      "port": 0
+    }
+  ]
+}

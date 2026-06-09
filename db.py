@@ -1,6 +1,7 @@
 """Слой работы с базой данных (SQLite через aiosqlite)."""
+from __future__ import annotations
 import aiosqlite
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import DB_PATH
 
 
@@ -45,6 +46,27 @@ async def init_db() -> None:
         )
         await db.execute(
             """
+            CREATE TABLE IF NOT EXISTS schedule_templates (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                day_of_week INTEGER NOT NULL,   -- 0=Пн, 6=Вс
+                time_str    TEXT NOT NULL,       -- 'ЧЧ:ММ'
+                UNIQUE(day_of_week, time_str)
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS student_schedules (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id  INTEGER NOT NULL,
+                day_of_week INTEGER NOT NULL,   -- 0=Пн … 6=Вс
+                time_str    TEXT NOT NULL,       -- 'ЧЧ:ММ'
+                UNIQUE(student_id, day_of_week, time_str)
+            )
+            """
+        )
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS payments (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id  INTEGER NOT NULL,
@@ -60,8 +82,11 @@ async def init_db() -> None:
 
 # ---------- Пользователи ----------
 
-async def add_user(tg_id: int, name: str, username: str | None) -> None:
+async def add_user(tg_id: int, name: str, username: str | None) -> bool:
+    """Добавляет пользователя. Возвращает True если ученик новый."""
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT tg_id FROM users WHERE tg_id = ?", (tg_id,))
+        is_new = (await cur.fetchone()) is None
         await db.execute(
             "INSERT OR IGNORE INTO users (tg_id, name, username, created_at) VALUES (?, ?, ?, ?)",
             (tg_id, name, username, datetime.now().isoformat(timespec="seconds")),
@@ -72,6 +97,7 @@ async def add_user(tg_id: int, name: str, username: str | None) -> None:
             (name, username, tg_id),
         )
         await db.commit()
+    return is_new
 
 
 async def get_user(tg_id: int) -> dict | None:
@@ -243,3 +269,170 @@ async def add_payment(student_id: int, package: str, lessons: int, amount: int) 
             (student_id, package, lessons, amount, datetime.now().isoformat(timespec="seconds")),
         )
         await db.commit()
+
+
+# ---------- Слоты по диапазону дат ----------
+
+async def slots_in_range(date_from: str, date_to: str) -> list[dict]:
+    """Все слоты за период [date_from..date_to] (формат 'YYYY-MM-DD').
+    LEFT JOIN users — чтобы получить имя ученика если слот занят."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT s.*, u.name AS student_name, u.username AS student_username
+            FROM slots s
+            LEFT JOIN users u ON u.tg_id = s.student_id
+            WHERE s.start_at >= ? AND s.start_at <= ?
+            ORDER BY s.start_at
+            """,
+            (date_from + " 00:00", date_to + " 23:59"),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+# ---------- Шаблон расписания ----------
+
+async def add_template(day_of_week: int, time_str: str) -> None:
+    """Добавляет регулярный слот в шаблон (0=Пн … 6=Вс). Дубликаты игнорируются."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO schedule_templates (day_of_week, time_str) VALUES (?, ?)",
+            (day_of_week, time_str),
+        )
+        await db.commit()
+
+
+async def remove_template(template_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM schedule_templates WHERE id = ?", (template_id,))
+        await db.commit()
+
+
+async def get_templates() -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM schedule_templates ORDER BY day_of_week, time_str"
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+# ---------- Личное расписание ученика ----------
+
+async def get_student_schedule(student_id: int) -> list[dict]:
+    """Возвращает личное расписание ученика (дни/время)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM student_schedules WHERE student_id = ? ORDER BY day_of_week, time_str",
+            (student_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def add_student_schedule_item(student_id: int, day_of_week: int, time_str: str) -> None:
+    """Добавляет один слот в личное расписание ученика."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO student_schedules (student_id, day_of_week, time_str) VALUES (?, ?, ?)",
+            (student_id, day_of_week, time_str),
+        )
+        await db.commit()
+
+
+async def remove_student_schedule_item(item_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM student_schedules WHERE id = ?", (item_id,))
+        await db.commit()
+
+
+async def generate_student_slots(student_id: int, weeks: int = 4) -> int:
+    """Генерирует предзабронированные слоты для ученика на N недель вперёд.
+    Если на это время уже есть свободный общий слот — бронирует его.
+    Если нет — создаёт персональный слот.
+    Возвращает количество созданных/забронированных слотов."""
+    schedule = await get_student_schedule(student_id)
+    if not schedule:
+        return 0
+
+    today = datetime.now().date()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    by_day: dict[int, list[str]] = {}
+    for item in schedule:
+        by_day.setdefault(item["day_of_week"], []).append(item["time_str"])
+
+    added = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        for delta in range(weeks * 7):
+            day = today + timedelta(days=delta)
+            dow = day.weekday()
+            if dow not in by_day:
+                continue
+            for time_str in by_day[dow]:
+                start_at = f"{day.strftime('%Y-%m-%d')} {time_str}"
+                if start_at <= now_str:
+                    continue
+                # Уже есть слот для этого ученика в это время?
+                cur = await db.execute(
+                    "SELECT id FROM slots WHERE start_at = ? AND student_id = ?",
+                    (start_at, student_id),
+                )
+                if await cur.fetchone():
+                    continue  # уже есть
+                # Есть свободный общий слот в это время — занимаем его
+                cur = await db.execute(
+                    "SELECT id FROM slots WHERE start_at = ? AND student_id IS NULL",
+                    (start_at,),
+                )
+                free = await cur.fetchone()
+                if free:
+                    await db.execute(
+                        "UPDATE slots SET student_id = ? WHERE id = ?",
+                        (student_id, free[0]),
+                    )
+                else:
+                    # Создаём персональный слот
+                    await db.execute(
+                        "INSERT INTO slots (start_at, student_id) VALUES (?, ?)",
+                        (start_at, student_id),
+                    )
+                added += 1
+        await db.commit()
+    return added
+
+
+async def generate_slots_from_templates(weeks: int = 4) -> int:
+    """Создаёт слоты на ближайшие N недель по шаблону. Возвращает кол-во новых слотов."""
+    templates = await get_templates()
+    if not templates:
+        return 0
+
+    today = datetime.now().date()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    by_day: dict[int, list[str]] = {}
+    for tpl in templates:
+        by_day.setdefault(tpl["day_of_week"], []).append(tpl["time_str"])
+
+    added = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        for delta in range(weeks * 7):
+            day = today + timedelta(days=delta)
+            dow = day.weekday()          # 0=Пн
+            if dow not in by_day:
+                continue
+            for time_str in by_day[dow]:
+                start_at = f"{day.strftime('%Y-%m-%d')} {time_str}"
+                if start_at <= now_str:
+                    continue
+                cur = await db.execute(
+                    "SELECT id FROM slots WHERE start_at = ?", (start_at,)
+                )
+                if await cur.fetchone():
+                    continue            # слот уже есть
+                await db.execute("INSERT INTO slots (start_at) VALUES (?)", (start_at,))
+                added += 1
+        await db.commit()
+    return added
