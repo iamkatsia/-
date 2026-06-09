@@ -45,25 +45,10 @@ fi
 git config user.email >/dev/null 2>&1 || git config user.email "e.tikhomirova.eng@gmail.com"
 git config user.name  >/dev/null 2>&1 || git config user.name  "Kate"
 
-# --- адрес Amvera (спросим один раз, дальше запомнится) ---
-if ! git remote get-url amvera >/dev/null 2>&1; then
-  echo "Похоже, это первый запуск. Нужна ссылка из Amvera."
-  echo
-  echo "Где её взять:"
-  echo "  1. Зайди на сайт Amvera, открой свой проект с ботом."
-  echo "  2. Найди вкладку/раздел с Git (там есть команды git remote add ...)."
-  echo "  3. Скопируй ссылку вида:"
-  echo "       https://git.amvera.ru/ТВОЙ_ЛОГИН/имя-проекта"
-  echo
-  read -r -p "Вставь сюда эту ссылку и нажми Enter: " AMVERA_URL
-  AMVERA_URL="$(echo "$AMVERA_URL" | tr -d '[:space:]')"
-  if [ -z "$AMVERA_URL" ]; then
-    echo "Ссылку не ввели. Запусти файл ещё раз."
-    read -r -p "Нажми Enter, чтобы закрыть." _
-    exit 1
-  fi
-  git remote add amvera "$AMVERA_URL"
-fi
+# --- адрес Amvera зашит прямо здесь, вводить ничего не нужно ---
+AMVERA_URL="https://git.msk0.amvera.ru/iamkatsia/bot-anglijskij"
+git remote remove amvera >/dev/null 2>&1
+git remote add amvera "$AMVERA_URL"
 
 # --- сохранить изменения и отправить ---
 git add -A
