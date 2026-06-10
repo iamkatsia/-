@@ -95,7 +95,8 @@ def _get_service():
             _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
             log.info("Google Calendar: подключение готово (%s).", GOOGLE_CALENDAR_ID)
         except Exception as e:  # noqa: BLE001
-            log.warning("Google Calendar: не удалось подключиться — %s", e)
+            import traceback
+            log.warning("Google Calendar: не удалось подключиться — %s\n%s", e, traceback.format_exc())
             _service = None
     return _service
 
