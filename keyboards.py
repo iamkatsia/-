@@ -115,11 +115,14 @@ def student_profile_kb(student_id: int, schedule: list[dict]) -> InlineKeyboardM
     rows.append([InlineKeyboardButton(text="📅 Создать уроки на 4 нед.", callback_data=f"gen_ssched:{student_id}")])
     # Редактирование профиля
     rows.append([
-        InlineKeyboardButton(text="🔗 Материалы", callback_data=f"edit_materials:{student_id}"),
-        InlineKeyboardButton(text="📊 Уровень", callback_data=f"edit_level:{student_id}"),
+        InlineKeyboardButton(text="🔗 Доска", callback_data=f"edit_materials:{student_id}"),
+        InlineKeyboardButton(text="📘 Учебник", callback_data=f"edit_textbook:{student_id}"),
     ])
     rows.append([
+        InlineKeyboardButton(text="📊 Уровень", callback_data=f"edit_level:{student_id}"),
         InlineKeyboardButton(text="📝 Прогресс", callback_data=f"edit_progress:{student_id}"),
+    ])
+    rows.append([
         InlineKeyboardButton(text="🗒 Заметки", callback_data=f"edit_notes:{student_id}"),
     ])
     rows.append([InlineKeyboardButton(text="⬅️ К списку учеников", callback_data="students_list")])

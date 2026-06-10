@@ -87,7 +87,7 @@ async def init_db() -> None:
         # Миграция: поля профиля ученика
         cur = await db.execute("PRAGMA table_info(users)")
         user_cols = [r[1] for r in await cur.fetchall()]
-        for col in ("materials_url", "level", "progress", "notes"):
+        for col in ("materials_url", "textbook_url", "level", "progress", "notes"):
             if col not in user_cols:
                 await db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
 
@@ -180,7 +180,7 @@ async def change_lessons(tg_id: int, delta: int) -> int:
         return row[0] if row else 0
 
 
-_PROFILE_FIELDS = frozenset({"materials_url", "level", "progress", "notes"})
+_PROFILE_FIELDS = frozenset({"materials_url", "textbook_url", "level", "progress", "notes"})
 
 
 async def update_student_field(tg_id: int, field: str, value: str | None) -> None:

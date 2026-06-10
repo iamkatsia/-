@@ -370,6 +370,7 @@ async def _show_student_profile(target, student_id: int) -> None:
 
         # Поля профиля
         materials = student.get("materials_url") or "—"
+        textbook  = student.get("textbook_url") or "—"
         level     = student.get("level")    or "—"
         progress  = student.get("progress") or "—"
         notes     = student.get("notes")    or "—"
@@ -378,7 +379,8 @@ async def _show_student_profile(target, student_id: int) -> None:
             f"👤 <b>{student['name']}</b>{uname}\n"
             f"Уроков к оплате: <b>{student['lessons_left']}</b>"
             f"{sched_text}\n\n"
-            f"🔗 <b>Материалы:</b> {materials}\n"
+            f"🔗 <b>Доска:</b> {materials}\n"
+            f"📘 <b>Учебник:</b> {textbook}\n"
             f"📊 <b>Уровень:</b> {level}\n"
             f"📝 <b>Прогресс:</b> {progress}\n"
             f"🗒 <b>Заметки:</b> {notes}"
@@ -582,7 +584,8 @@ async def generate_slots(call: CallbackQuery):
 # ---------- Редактирование профиля ученика ----------
 
 _FIELD_META = {
-    "materials_url": ("🔗 Ссылка на материалы", AdminStates.editing_materials),
+    "materials_url": ("🔗 Ссылка на доску",      AdminStates.editing_materials),
+    "textbook_url":  ("📘 Ссылка на учебник",    AdminStates.editing_textbook),
     "level":         ("📊 Уровень",              AdminStates.editing_level),
     "progress":      ("📝 Прогресс",             AdminStates.editing_progress),
     "notes":         ("🗒 Заметки",              AdminStates.editing_notes),
@@ -624,6 +627,10 @@ async def _save_edit(message: Message, state: FSMContext) -> None:
 async def edit_materials_start(call: CallbackQuery, state: FSMContext):
     await _start_edit(call, state, "materials_url")
 
+@router.callback_query(F.data.startswith("edit_textbook:"))
+async def edit_textbook_start(call: CallbackQuery, state: FSMContext):
+    await _start_edit(call, state, "textbook_url")
+
 @router.callback_query(F.data.startswith("edit_level:"))
 async def edit_level_start(call: CallbackQuery, state: FSMContext):
     await _start_edit(call, state, "level")
@@ -639,6 +646,10 @@ async def edit_notes_start(call: CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.editing_materials)
 async def edit_materials_save(message: Message, state: FSMContext):
+    await _save_edit(message, state)
+
+@router.message(AdminStates.editing_textbook)
+async def edit_textbook_save(message: Message, state: FSMContext):
     await _save_edit(message, state)
 
 @router.message(AdminStates.editing_level)

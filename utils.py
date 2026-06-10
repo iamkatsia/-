@@ -140,6 +140,18 @@ def parse_slots_text(text: str) -> tuple[list[str], list[str]]:
     return parsed, errors
 
 
+def materials_link(url: str | None, text: str = "Твоя доска") -> str:
+    """Кликабельная ссылка на материалы. Если ссылки нет — прочерк.
+    Если в поле не ссылка (нет http), показываем как обычный текст."""
+    if not url:
+        return "—"
+    url = url.strip()
+    if url.startswith(("http://", "https://")):
+        safe = url.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+        return f'<a href="{safe}">{text}</a>'
+    return url
+
+
 def extract_file(message: Message) -> str | None:
     """Возвращает сохраняемую строку 'тип:file_id' для документа или фото из сообщения."""
     if message.document:

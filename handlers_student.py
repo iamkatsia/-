@@ -8,7 +8,7 @@ import db
 import keyboards as kb
 from config import ADMIN_ID, PAYMENT_DETAILS, LESSON_PRICE_RUB, LESSON_PRICE_BYN
 from states import StudentStates
-from utils import extract_file, send_stored_file, fmt_dt, week_bounds, week_title
+from utils import extract_file, send_stored_file, fmt_dt, week_bounds, week_title, materials_link
 
 router = Router()
 
@@ -48,16 +48,22 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
 @router.message(F.text == "📎 Мои материалы")
 async def show_materials(message: Message):
     user = await db.get_user(message.from_user.id)
-    url = user.get("materials_url") if user else None
-    if url:
+    board = user.get("materials_url") if user else None
+    textbook = user.get("textbook_url") if user else None
+    if board or textbook:
+        lines = ["📎 <b>Твои учебные материалы:</b>\n"]
+        if board:
+            lines.append(f"🔗 {materials_link(board)}")
+        if textbook:
+            lines.append(f"📘 {materials_link(textbook, 'Твой учебник')}")
         await message.answer(
-            f"📎 <b>Твои учебные материалы:</b>\n\n{url}",
-            disable_web_page_preview=False,
+            "\n".join(lines),
+            disable_web_page_preview=True,
         )
     else:
         await message.answer(
-            "📎 Учитель ещё не добавил ссылку на твои материалы.\n"
-            "Она появится здесь, как только будет готова."
+            "📎 Учитель ещё не добавил ссылки на твои материалы.\n"
+            "Они появятся здесь, как только будут готовы."
         )
 
 
@@ -81,7 +87,8 @@ async def my_profile(message: Message):
 
     level = user.get("level") or "—"
     progress = user.get("progress") or "—"
-    materials = user.get("materials_url") or "—"
+    materials = materials_link(user.get("materials_url"))
+    textbook = materials_link(user.get("textbook_url"), "Твой учебник")
     owed = user["lessons_left"]
     rub = owed * LESSON_PRICE_RUB
     byn = owed * LESSON_PRICE_BYN
@@ -90,7 +97,8 @@ async def my_profile(message: Message):
         f"👤 <b>{user['name']}</b>\n\n"
         f"📊 <b>Уровень:</b> {level}\n"
         f"📝 <b>Прогресс:</b> {progress}\n"
-        f"🔗 <b>Материалы:</b> {materials}\n\n"
+        f"🔗 <b>Доска:</b> {materials}\n"
+        f"📘 <b>Учебник:</b> {textbook}\n\n"
         f"📋 <b>Постоянное расписание:</b>\n{sched_text}\n\n"
         f"💳 <b>Уроков к оплате:</b> {owed}"
         + (f" ({rub} ₽ / {byn} BYN)" if owed else ""),

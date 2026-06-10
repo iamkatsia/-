@@ -12,6 +12,7 @@ class AdminStates(StatesGroup):
     student_sched_pick_day = State()   # выбор дня для личного расписания ученика
     student_sched_pick_time = State()  # ввод времени для личного расписания ученика
     editing_materials = State()        # ввод ссылки на материалы (student_id в data)
+    editing_textbook = State()         # ввод ссылки на учебник (student_id в data)
     editing_level = State()            # ввод уровня ученика
     editing_progress = State()         # ввод заметки о прогрессе
     editing_notes = State()            # ввод общих заметок
