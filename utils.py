@@ -1,5 +1,6 @@
 """Вспомогательные функции."""
 from __future__ import annotations
+import re
 from datetime import datetime, date, timedelta
 
 from aiogram import Bot
@@ -60,6 +61,83 @@ def week_title(offset: int = 0) -> str:
     if monday.month == sunday.month:
         return f"{monday.day} — {sunday.day} {_RU_MONTHS_SHORT[sunday.month]}"
     return f"{monday.day} {_RU_MONTHS_SHORT[monday.month]} — {sunday.day} {_RU_MONTHS_SHORT[sunday.month]}"
+
+
+# ---------- Разбор слотов из текста учителя ----------
+
+_MONTHS_PREFIX = {
+    "янв": 1, "фев": 2, "мар": 3, "апр": 4, "май": 5, "мая": 5,
+    "июн": 6, "июл": 7, "авг": 8, "сен": 9, "окт": 10, "ноя": 11, "дек": 12,
+}
+
+_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
+
+
+def _nearest_future_date(day: int, month: int, today: date) -> date | None:
+    """Ближайшая будущая дата с таким днём и месяцем (сегодня тоже подходит)."""
+    for year in (today.year, today.year + 1):
+        try:
+            d = date(year, month, day)
+        except ValueError:
+            continue
+        if d >= today:
+            return d
+    return None
+
+
+def parse_slots_text(text: str) -> tuple[list[str], list[str]]:
+    """Разбирает слоты из свободного текста.
+
+    Каждая строка: дата + одно или несколько времён, например:
+      «11 июня 13:00, 15:00»
+      «11.06 17:00»
+      «2026-06-11 13:00» (старый формат тоже работает)
+    Год подставляется автоматически — берётся ближайшая будущая дата.
+    Возвращает (список 'YYYY-MM-DD HH:MM', список нераспознанных строк).
+    """
+    today = date.today()
+    parsed: list[str] = []
+    errors: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # Старый формат: 2026-06-11 13:00
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})", line)
+        if m:
+            try:
+                dt = datetime.strptime(f"{m[1]} {m[2]}", "%Y-%m-%d %H:%M")
+                parsed.append(dt.strftime("%Y-%m-%d %H:%M"))
+            except ValueError:
+                errors.append(raw_line)
+            continue
+        # «11 июня 13:00, 15:00» или «11.06 13:00 15:00»
+        m = re.match(r"^(\d{1,2})(?:\s+([а-яё]+)\.?|[./](\d{1,2}))\s+(.+)$", line, re.IGNORECASE)
+        if not m:
+            errors.append(raw_line)
+            continue
+        day = int(m[1])
+        month = _MONTHS_PREFIX.get(m[2].lower()[:3]) if m[2] else int(m[3])
+        times = _TIME_RE.findall(m[4])
+        if not month or not 1 <= month <= 12 or not times:
+            errors.append(raw_line)
+            continue
+        d = _nearest_future_date(day, month, today)
+        if d is None:
+            errors.append(raw_line)
+            continue
+        line_slots = []
+        for hh, mm in times:
+            h, mi = int(hh), int(mm)
+            if not (0 <= h <= 23 and 0 <= mi <= 59):
+                line_slots = []
+                break
+            line_slots.append(f"{d.strftime('%Y-%m-%d')} {h:02d}:{mi:02d}")
+        if line_slots:
+            parsed.extend(line_slots)
+        else:
+            errors.append(raw_line)
+    return parsed, errors
 
 
 def extract_file(message: Message) -> str | None:

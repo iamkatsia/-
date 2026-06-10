@@ -11,7 +11,7 @@ import db
 import keyboards as kb
 from config import ADMIN_ID, PAYMENT_DETAILS, LESSON_PRICE_RUB, LESSON_PRICE_BYN
 from states import AdminStates
-from utils import extract_file, send_stored_file, fmt_dt, week_bounds, week_title, week_monday
+from utils import extract_file, send_stored_file, fmt_dt, week_bounds, week_title, week_monday, parse_slots_text
 from utils import _RU_WEEKDAYS_SHORT, _RU_MONTHS_SHORT
 from keyboards import DAYS_NAMES
 from datetime import timedelta
@@ -40,28 +40,34 @@ async def back_to_student(message: Message, state: FSMContext):
 async def add_slots_start(message: Message, state: FSMContext):
     await state.set_state(AdminStates.adding_slots)
     await message.answer(
-        "Пришли слоты по одному в строке в формате <b>ГГГГ-ММ-ДД ЧЧ:ММ</b>.\n\n"
-        "Пример:\n2026-06-10 18:00\n2026-06-10 19:00\n2026-06-11 17:00"
+        "Пришли слоты: дата и время через запятую, каждая дата с новой строки.\n\n"
+        "Пример:\n"
+        "<code>11 июня 13:00, 15:00</code>\n"
+        "<code>15 июня 10:00</code>\n\n"
+        "Год подставится автоматически (ближайшая будущая дата)."
     )
 
 
 @router.message(AdminStates.adding_slots)
 async def add_slots_receive(message: Message, state: FSMContext):
-    added, errors = 0, []
-    for line in message.text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            dt = datetime.strptime(line, "%Y-%m-%d %H:%M")
-            await db.add_slot(dt.strftime("%Y-%m-%d %H:%M"))
-            added += 1
-        except ValueError:
-            errors.append(line)
+    parsed, errors = parse_slots_text(message.text or "")
+    added, dups = [], 0
+    for start_at in parsed:
+        if await db.add_slot(start_at):
+            added.append(start_at)
+        else:
+            dups += 1
     await state.clear()
-    text = f"✅ Добавлено слотов: {added}."
+    if added:
+        lines = "\n".join(f"  • {fmt_dt(s)}" for s in sorted(added))
+        text = f"✅ Добавлено слотов: {len(added)}\n{lines}"
+    else:
+        text = "Новых слотов не добавлено."
+    if dups:
+        text += f"\n\n♻️ Уже были в расписании (пропущены): {dups}"
     if errors:
-        text += "\n⚠️ Не распознаны строки:\n" + "\n".join(errors)
+        text += "\n\n⚠️ Не распознаны строки:\n" + "\n".join(errors) + \
+                "\n\nФормат: <code>11 июня 13:00, 15:00</code>"
     await message.answer(text, reply_markup=kb.admin_menu())
 
 
@@ -92,6 +98,8 @@ def _format_admin_week(slots: list[dict], offset: int) -> str:
         lines.append("")
     if not has_slots:
         lines.append("На эту неделю слотов нет.\nДобавь через «📆 Расписание» или «➕ Добавить слоты».")
+    else:
+        lines.append("<i>Нажми 🗑 на кнопке ниже, чтобы удалить слот.</i>")
     return "\n".join(lines)
 
 
@@ -99,7 +107,7 @@ async def _send_admin_week(target, offset: int) -> None:
     date_from, date_to = week_bounds(offset)
     slots = await db.slots_in_range(date_from, date_to)
     text = _format_admin_week(slots, offset)
-    markup = kb.admin_week_kb(offset)
+    markup = kb.admin_week_kb(slots, offset)
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
         await target.answer()
@@ -115,6 +123,51 @@ async def all_bookings(message: Message):
 @router.callback_query(F.data.startswith("aweek:"))
 async def admin_week_nav(call: CallbackQuery):
     offset = int(call.data.split(":")[1])
+    await _send_admin_week(call, offset)
+
+
+# ---------- Удаление слотов ----------
+
+@router.callback_query(F.data.startswith("adelslot:"))
+async def admin_delete_slot(call: CallbackQuery):
+    _, slot_id_str, offset_str = call.data.split(":")
+    slot_id, offset = int(slot_id_str), int(offset_str)
+    slot = await db.get_slot(slot_id)
+    if not slot:
+        await call.answer("Слот уже удалён.", show_alert=True)
+        await _send_admin_week(call, offset)
+        return
+    if slot["student_id"]:
+        # Занятый слот — спрашиваем подтверждение
+        student = await db.get_user(slot["student_id"])
+        name = student["name"] if student else "ученик"
+        await call.message.edit_text(
+            f"⚠️ На <b>{fmt_dt(slot['start_at'])}</b> записан(а) <b>{name}</b>.\n\n"
+            "Точно удалить урок? Ученик получит уведомление об отмене.",
+            reply_markup=kb.confirm_del_slot_kb(slot_id, offset),
+        )
+        await call.answer()
+        return
+    await db.delete_slot(slot_id)
+    await call.answer("Слот удалён")
+    await _send_admin_week(call, offset)
+
+
+@router.callback_query(F.data.startswith("adelyes:"))
+async def admin_delete_slot_confirm(call: CallbackQuery, bot: Bot):
+    _, slot_id_str, offset_str = call.data.split(":")
+    slot_id, offset = int(slot_id_str), int(offset_str)
+    slot = await db.delete_slot(slot_id)
+    if slot and slot["student_id"]:
+        try:
+            await bot.send_message(
+                slot["student_id"],
+                f"⚠️ Урок <b>{fmt_dt(slot['start_at'])}</b> отменён учителем.\n"
+                "Напиши учителю, чтобы договориться о новом времени 🙏",
+            )
+        except Exception:
+            pass
+    await call.answer("Урок удалён, ученик уведомлён")
     await _send_admin_week(call, offset)
 
 

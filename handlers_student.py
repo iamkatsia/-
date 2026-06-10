@@ -106,7 +106,7 @@ async def my_bookings(message: Message):
     if not bookings:
         await message.answer(
             "У тебя нет предстоящих уроков.\n"
-            "Записаться можно через «📆 Моё расписание»."
+            "Напиши учителю прямо в этот чат, чтобы договориться о времени."
         )
         return
     await message.answer(
@@ -144,22 +144,23 @@ async def _send_student_week(target, student_id: int, offset: int) -> None:
     slots = await db.slots_in_range(date_from, date_to)
 
     title = week_title(offset)
-    visible = [s for s in slots if s["student_id"] is None or s["student_id"] == student_id]
+    mine = [s for s in slots if s["student_id"] == student_id]
 
-    if visible:
+    if mine:
         text = (
-            f"📆 <b>Расписание: {title}</b>\n\n"
-            "📅 — свободно, нажми чтобы записаться\n"
-            "✅ — твой урок (нажми → отменить)  🔄 — перенести"
+            f"📆 <b>Моё расписание: {title}</b>\n\n"
+            "Твои уроки на этой неделе 👇\n"
+            "✅ — нажми, чтобы отменить  🔄 — перенести"
         )
     else:
         text = (
-            f"📆 <b>Расписание: {title}</b>\n\n"
-            "На эту неделю слотов нет.\n"
-            "Листай вперёд ▶ — там могут быть свободные слоты."
+            f"📆 <b>Моё расписание: {title}</b>\n\n"
+            "На этой неделе у тебя нет уроков.\n"
+            "Полистай другие недели ◀ ▶ или напиши учителю, "
+            "чтобы договориться о времени."
         )
 
-    markup = kb.student_week_kb(slots, student_id, offset)
+    markup = kb.student_week_kb(mine, student_id, offset)
 
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
@@ -243,7 +244,7 @@ async def reschedule_pick(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not booked:
         await call.message.answer(
             "⚠️ Выбранный слот только что заняли.\n"
-            "Старый урок отменён — запишись на другое время через «📆 Моё расписание»."
+            "Старый урок отменён — напиши учителю, чтобы подобрать другое время."
         )
         await state.clear()
         await call.answer()

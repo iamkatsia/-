@@ -134,36 +134,24 @@ def new_student_notify_kb(student_id: int) -> InlineKeyboardMarkup:
 
 
 def student_week_kb(slots: list[dict], student_id: int, offset: int) -> InlineKeyboardMarkup:
-    """Недельное расписание для ученика.
-    Свободные слоты — кнопка «Записаться».
-    Свои уроки — кнопка «✅ дата» (отменить) + «🔄» (перенести).
-    Чужие занятые слоты — не показываются.
-    Внизу — навигация по неделям.
+    """Недельное расписание для ученика: только его уроки.
+    «✅ дата» — отменить, «🔄» — перенести. Внизу — навигация по неделям.
     """
     rows = []
     for slot in slots:
+        if slot["student_id"] != student_id:
+            continue
         label = fmt_slot_btn(slot["start_at"])
-        if slot["student_id"] is None:
-            # свободный слот
-            rows.append([
-                InlineKeyboardButton(
-                    text=f"📅 {label}",
-                    callback_data=f"book:{slot['id']}",
-                )
-            ])
-        elif slot["student_id"] == student_id:
-            # урок этого ученика
-            rows.append([
-                InlineKeyboardButton(
-                    text=f"✅ {label}",
-                    callback_data=f"cancel:{slot['id']}",
-                ),
-                InlineKeyboardButton(
-                    text="🔄",
-                    callback_data=f"reschedule:{slot['id']}",
-                ),
-            ])
-        # чужие занятые — пропускаем
+        rows.append([
+            InlineKeyboardButton(
+                text=f"✅ {label}",
+                callback_data=f"cancel:{slot['id']}",
+            ),
+            InlineKeyboardButton(
+                text="🔄",
+                callback_data=f"reschedule:{slot['id']}",
+            ),
+        ])
 
     # навигация
     nav = []
@@ -182,8 +170,20 @@ def student_week_kb(slots: list[dict], student_id: int, offset: int) -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_week_kb(offset: int) -> InlineKeyboardMarkup:
-    """Навигация по неделям для учителя."""
+def admin_week_kb(slots: list[dict], offset: int) -> InlineKeyboardMarkup:
+    """Недельный вид для учителя: 🗑 кнопка на каждый слот + навигация по неделям."""
+    rows = []
+    for s in slots:
+        label = fmt_slot_btn(s["start_at"])
+        if s["student_id"]:
+            name = s.get("student_name") or "?"
+            text = f"🗑 {label} — {name}"
+        else:
+            text = f"🗑 {label} — свободно"
+        rows.append([InlineKeyboardButton(
+            text=text,
+            callback_data=f"adelslot:{s['id']}:{offset}",
+        )])
     nav = []
     if offset > -4:          # не уходим дальше 4 недель назад
         prev_title = week_title(offset - 1)
@@ -196,7 +196,16 @@ def admin_week_kb(offset: int) -> InlineKeyboardMarkup:
         text=f"{next_title} ▶",
         callback_data=f"aweek:{offset + 1}",
     ))
-    return InlineKeyboardMarkup(inline_keyboard=[nav])
+    rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def confirm_del_slot_kb(slot_id: int, offset: int) -> InlineKeyboardMarkup:
+    """Подтверждение удаления занятого слота."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"adelyes:{slot_id}:{offset}"),
+        InlineKeyboardButton(text="↩️ Нет", callback_data=f"aweek:{offset}"),
+    ]])
 
 
 def hw_submit_kb(hw_id: int) -> InlineKeyboardMarkup:

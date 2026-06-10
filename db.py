@@ -205,10 +205,28 @@ async def reset_lessons(tg_id: int) -> int:
 
 # ---------- Слоты / запись ----------
 
-async def add_slot(start_at: str) -> None:
+async def add_slot(start_at: str) -> bool:
+    """Добавляет слот, если такого времени ещё нет. True — добавлен, False — дубль."""
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT id FROM slots WHERE start_at = ?", (start_at,))
+        if await cur.fetchone():
+            return False
         await db.execute("INSERT INTO slots (start_at) VALUES (?)", (start_at,))
         await db.commit()
+    return True
+
+
+async def delete_slot(slot_id: int) -> dict | None:
+    """Удаляет слот целиком (для учителя). Возвращает данные слота до удаления."""
+    slot = await get_slot(slot_id)
+    if not slot:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM slots WHERE id = ?", (slot_id,))
+        await db.commit()
+    if slot.get("gcal_event_id"):
+        await gcal.delete_event(slot["gcal_event_id"])
+    return slot
 
 
 async def free_slots() -> list[dict]:
