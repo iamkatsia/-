@@ -98,16 +98,25 @@ async def my_profile(message: Message):
     )
 
 
-# ---------- Запись на урок ----------
+# ---------- Перенос / отмена занятия ----------
 
-@router.message(F.text == "📅 Записаться на урок")
-async def show_slots(message: Message):
-    slots = await db.free_slots()
-    if not slots:
-        await message.answer("Свободных слотов пока нет. Загляни позже 🙏")
+@router.message(F.text == "🔄 Перенести/Отменить занятие")
+async def my_bookings(message: Message):
+    bookings = await db.student_bookings(message.from_user.id)
+    if not bookings:
+        await message.answer(
+            "У тебя нет предстоящих уроков.\n"
+            "Записаться можно через «📆 Моё расписание»."
+        )
         return
-    await message.answer("Выбери удобное время:", reply_markup=kb.slots_kb(slots))
+    await message.answer(
+        "Твои ближайшие уроки:\n"
+        "❌ — отменить урок, 🔄 — перенести на другое время",
+        reply_markup=kb.bookings_kb(bookings),
+    )
 
+
+# ---------- Запись на урок ----------
 
 @router.callback_query(F.data.startswith("book:"))
 async def book(call: CallbackQuery, bot: Bot):
@@ -147,7 +156,7 @@ async def _send_student_week(target, student_id: int, offset: int) -> None:
         text = (
             f"📆 <b>Расписание: {title}</b>\n\n"
             "На эту неделю слотов нет.\n"
-            "Листай вперёд ▶ или нажми «📅 Записаться на урок»."
+            "Листай вперёд ▶ — там могут быть свободные слоты."
         )
 
     markup = kb.student_week_kb(slots, student_id, offset)
@@ -234,7 +243,7 @@ async def reschedule_pick(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not booked:
         await call.message.answer(
             "⚠️ Выбранный слот только что заняли.\n"
-            "Старый урок отменён — запишись на другое время через «📅 Записаться на урок»."
+            "Старый урок отменён — запишись на другое время через «📆 Моё расписание»."
         )
         await state.clear()
         await call.answer()

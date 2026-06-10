@@ -13,9 +13,9 @@ DAYS_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 def student_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📅 Записаться на урок")],
             [KeyboardButton(text="📆 Моё расписание"), KeyboardButton(text="📚 Домашнее задание")],
             [KeyboardButton(text="💳 Оплата"), KeyboardButton(text="📎 Мои материалы")],
+            [KeyboardButton(text="🔄 Перенести/Отменить занятие")],
             [KeyboardButton(text="👤 Мой профиль")],
         ],
         resize_keyboard=True,
@@ -38,14 +38,6 @@ def admin_menu() -> ReplyKeyboardMarkup:
 
 
 # ---------- Инлайн-клавиатуры ----------
-
-def slots_kb(slots: list[dict]) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=f"📅 {fmt_dt(s['start_at'])}", callback_data=f"book:{s['id']}")]
-        for s in slots
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def bookings_kb(bookings: list[dict]) -> InlineKeyboardMarkup:
     """Для каждого урока — кнопки «Отменить» и «Перенести» в одной строке."""
