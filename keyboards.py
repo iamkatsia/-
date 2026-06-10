@@ -16,6 +16,7 @@ def student_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="📅 Записаться на урок")],
             [KeyboardButton(text="📆 Моё расписание"), KeyboardButton(text="📚 Домашнее задание")],
             [KeyboardButton(text="💳 Оплата"), KeyboardButton(text="📎 Мои материалы")],
+            [KeyboardButton(text="👤 Мой профиль")],
         ],
         resize_keyboard=True,
     )

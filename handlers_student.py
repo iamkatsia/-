@@ -61,6 +61,43 @@ async def show_materials(message: Message):
         )
 
 
+# ---------- Мой профиль ----------
+
+@router.message(F.text == "👤 Мой профиль")
+async def my_profile(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user:
+        await message.answer("Нажми /start, чтобы зарегистрироваться.")
+        return
+
+    schedule = await db.get_student_schedule(message.from_user.id)
+    if schedule:
+        sched_text = "\n".join(
+            f"  • {kb.DAYS_NAMES[i['day_of_week']]} {i['time_str']}"
+            for i in schedule
+        )
+    else:
+        sched_text = "  пока не назначено"
+
+    level = user.get("level") or "—"
+    progress = user.get("progress") or "—"
+    materials = user.get("materials_url") or "—"
+    owed = user["lessons_left"]
+    rub = owed * LESSON_PRICE_RUB
+    byn = owed * LESSON_PRICE_BYN
+
+    await message.answer(
+        f"👤 <b>{user['name']}</b>\n\n"
+        f"📊 <b>Уровень:</b> {level}\n"
+        f"📝 <b>Прогресс:</b> {progress}\n"
+        f"🔗 <b>Материалы:</b> {materials}\n\n"
+        f"📋 <b>Постоянное расписание:</b>\n{sched_text}\n\n"
+        f"💳 <b>Уроков к оплате:</b> {owed}"
+        + (f" ({rub} ₽ / {byn} BYN)" if owed else ""),
+        disable_web_page_preview=True,
+    )
+
+
 # ---------- Запись на урок ----------
 
 @router.message(F.text == "📅 Записаться на урок")
