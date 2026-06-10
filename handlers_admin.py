@@ -296,7 +296,7 @@ async def students_list_cb(call: CallbackQuery):
 
 
 async def _show_student_profile(target, student_id: int) -> None:
-    """Показывает профиль ученика с его расписанием."""
+    """Показывает полный профиль ученика."""
     student = await db.get_user(student_id)
     if not student:
         text = "Ученик не найден."
@@ -304,26 +304,39 @@ async def _show_student_profile(target, student_id: int) -> None:
     else:
         schedule = await db.get_student_schedule(student_id)
         uname = f" (@{student['username']})" if student.get("username") else ""
+
+        # Расписание
         if schedule:
             sched_lines = "\n".join(
                 f"  • {DAYS_NAMES[i['day_of_week']]} {i['time_str']}"
                 for i in schedule
             )
-            sched_text = f"\n\n📋 <b>Личное расписание:</b>\n{sched_lines}\n\nНажми 🗑 напротив дня — удалить из расписания."
+            sched_text = f"\n\n📋 <b>Расписание:</b>\n{sched_lines}\n<i>Нажми 🗑 напротив дня — удалить.</i>"
         else:
-            sched_text = "\n\n📋 <b>Расписание не назначено.</b>\nНажми «➕ Добавить день/время»."
+            sched_text = "\n\n📋 <b>Расписание:</b> не назначено"
+
+        # Поля профиля
+        materials = student.get("materials_url") or "—"
+        level     = student.get("level")    or "—"
+        progress  = student.get("progress") or "—"
+        notes     = student.get("notes")    or "—"
+
         text = (
             f"👤 <b>{student['name']}</b>{uname}\n"
-            f"Уроков к оплате: {student['lessons_left']}"
-            f"{sched_text}"
+            f"Уроков к оплате: <b>{student['lessons_left']}</b>"
+            f"{sched_text}\n\n"
+            f"🔗 <b>Материалы:</b> {materials}\n"
+            f"📊 <b>Уровень:</b> {level}\n"
+            f"📝 <b>Прогресс:</b> {progress}\n"
+            f"🗒 <b>Заметки:</b> {notes}"
         )
         markup = kb.student_profile_kb(student_id, schedule)
 
     if isinstance(target, CallbackQuery):
-        await target.message.edit_text(text, reply_markup=markup)
+        await target.message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
         await target.answer()
     else:
-        await target.answer(text, reply_markup=markup)
+        await target.answer(text, reply_markup=markup, disable_web_page_preview=True)
 
 
 @router.callback_query(F.data.startswith("student_profile:"))
@@ -511,3 +524,78 @@ async def generate_slots(call: CallbackQuery):
             "Новых слотов не добавлено — либо шаблон пуст, либо все слоты уже существуют.",
             show_alert=True,
         )
+
+
+# ---------- Редактирование профиля ученика ----------
+
+_FIELD_META = {
+    "materials_url": ("🔗 Ссылка на материалы", AdminStates.editing_materials),
+    "level":         ("📊 Уровень",              AdminStates.editing_level),
+    "progress":      ("📝 Прогресс",             AdminStates.editing_progress),
+    "notes":         ("🗒 Заметки",              AdminStates.editing_notes),
+}
+
+
+async def _start_edit(call: CallbackQuery, state: FSMContext, field: str) -> None:
+    student_id = int(call.data.split(":")[1])
+    label, fsm_state = _FIELD_META[field]
+    await state.set_state(fsm_state)
+    await state.update_data(student_id=student_id, field=field)
+    student = await db.get_user(student_id)
+    name = student["name"] if student else str(student_id)
+    current = (student or {}).get(field) or "не задано"
+    await call.message.answer(
+        f"Редактирую <b>{label}</b> для {name}.\n"
+        f"Сейчас: <i>{current}</i>\n\n"
+        f"Пришли новое значение (или <code>—</code> чтобы очистить поле):"
+    )
+    await call.answer()
+
+
+async def _save_edit(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    student_id = data["student_id"]
+    field = data["field"]
+    value = (message.text or "").strip()
+    if value in ("—", "-", ""):
+        value = None
+    await db.update_student_field(student_id, field, value)
+    await state.clear()
+    label = _FIELD_META[field][0]
+    shown = value or "очищено"
+    await message.answer(f"✅ {label} обновлено: <i>{shown}</i>")
+    await _show_student_profile(message, student_id)
+
+
+@router.callback_query(F.data.startswith("edit_materials:"))
+async def edit_materials_start(call: CallbackQuery, state: FSMContext):
+    await _start_edit(call, state, "materials_url")
+
+@router.callback_query(F.data.startswith("edit_level:"))
+async def edit_level_start(call: CallbackQuery, state: FSMContext):
+    await _start_edit(call, state, "level")
+
+@router.callback_query(F.data.startswith("edit_progress:"))
+async def edit_progress_start(call: CallbackQuery, state: FSMContext):
+    await _start_edit(call, state, "progress")
+
+@router.callback_query(F.data.startswith("edit_notes:"))
+async def edit_notes_start(call: CallbackQuery, state: FSMContext):
+    await _start_edit(call, state, "notes")
+
+
+@router.message(AdminStates.editing_materials)
+async def edit_materials_save(message: Message, state: FSMContext):
+    await _save_edit(message, state)
+
+@router.message(AdminStates.editing_level)
+async def edit_level_save(message: Message, state: FSMContext):
+    await _save_edit(message, state)
+
+@router.message(AdminStates.editing_progress)
+async def edit_progress_save(message: Message, state: FSMContext):
+    await _save_edit(message, state)
+
+@router.message(AdminStates.editing_notes)
+async def edit_notes_save(message: Message, state: FSMContext):
+    await _save_edit(message, state)

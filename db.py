@@ -78,11 +78,19 @@ async def init_db() -> None:
             )
             """
         )
-        # Миграция: колонка с id события в Google Календаре (для уже существующей БД)
+        # Миграция: колонка с id события в Google Календаре
         cur = await db.execute("PRAGMA table_info(slots)")
         cols = [r[1] for r in await cur.fetchall()]
         if "gcal_event_id" not in cols:
             await db.execute("ALTER TABLE slots ADD COLUMN gcal_event_id TEXT")
+
+        # Миграция: поля профиля ученика
+        cur = await db.execute("PRAGMA table_info(users)")
+        user_cols = [r[1] for r in await cur.fetchall()]
+        for col in ("materials_url", "level", "progress", "notes"):
+            if col not in user_cols:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+
         await db.commit()
 
 
@@ -170,6 +178,18 @@ async def change_lessons(tg_id: int, delta: int) -> int:
         cur = await db.execute("SELECT lessons_left FROM users WHERE tg_id = ?", (tg_id,))
         row = await cur.fetchone()
         return row[0] if row else 0
+
+
+_PROFILE_FIELDS = frozenset({"materials_url", "level", "progress", "notes"})
+
+
+async def update_student_field(tg_id: int, field: str, value: str | None) -> None:
+    """Обновляет одно поле профиля ученика (materials_url / level / progress / notes)."""
+    if field not in _PROFILE_FIELDS:
+        raise ValueError(f"Недопустимое поле: {field}")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"UPDATE users SET {field} = ? WHERE tg_id = ?", (value, tg_id))
+        await db.commit()
 
 
 async def reset_lessons(tg_id: int) -> int:

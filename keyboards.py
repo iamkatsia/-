@@ -15,7 +15,7 @@ def student_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📅 Записаться на урок")],
             [KeyboardButton(text="📆 Моё расписание"), KeyboardButton(text="📚 Домашнее задание")],
-            [KeyboardButton(text="💳 Оплата")],
+            [KeyboardButton(text="💳 Оплата"), KeyboardButton(text="📎 Мои материалы")],
         ],
         resize_keyboard=True,
     )
@@ -108,7 +108,7 @@ def students_list_kb(students: list[dict]) -> InlineKeyboardMarkup:
 
 
 def student_profile_kb(student_id: int, schedule: list[dict]) -> InlineKeyboardMarkup:
-    """Профиль ученика: его личное расписание + кнопки управления."""
+    """Профиль ученика: личное расписание + редактирование полей профиля."""
     rows = []
     # Текущие слоты расписания — нажать → удалить
     for item in schedule:
@@ -117,9 +117,18 @@ def student_profile_kb(student_id: int, schedule: list[dict]) -> InlineKeyboardM
             text=f"🗑 {day_name} {item['time_str']}",
             callback_data=f"del_ssched:{item['id']}:{student_id}",
         )])
-    # Управление
+    # Управление расписанием
     rows.append([InlineKeyboardButton(text="➕ Добавить день/время", callback_data=f"add_ssched:{student_id}")])
     rows.append([InlineKeyboardButton(text="📅 Создать уроки на 4 нед.", callback_data=f"gen_ssched:{student_id}")])
+    # Редактирование профиля
+    rows.append([
+        InlineKeyboardButton(text="🔗 Материалы", callback_data=f"edit_materials:{student_id}"),
+        InlineKeyboardButton(text="📊 Уровень", callback_data=f"edit_level:{student_id}"),
+    ])
+    rows.append([
+        InlineKeyboardButton(text="📝 Прогресс", callback_data=f"edit_progress:{student_id}"),
+        InlineKeyboardButton(text="🗒 Заметки", callback_data=f"edit_notes:{student_id}"),
+    ])
     rows.append([InlineKeyboardButton(text="⬅️ К списку учеников", callback_data="students_list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

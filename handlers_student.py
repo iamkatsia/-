@@ -43,6 +43,24 @@ async def cmd_start(message: Message, state: FSMContext, bot: Bot):
         )
 
 
+# ---------- Мои материалы ----------
+
+@router.message(F.text == "📎 Мои материалы")
+async def show_materials(message: Message):
+    user = await db.get_user(message.from_user.id)
+    url = user.get("materials_url") if user else None
+    if url:
+        await message.answer(
+            f"📎 <b>Твои учебные материалы:</b>\n\n{url}",
+            disable_web_page_preview=False,
+        )
+    else:
+        await message.answer(
+            "📎 Учитель ещё не добавил ссылку на твои материалы.\n"
+            "Она появится здесь, как только будет готова."
+        )
+
+
 # ---------- Запись на урок ----------
 
 @router.message(F.text == "📅 Записаться на урок")
